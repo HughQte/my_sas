@@ -1,19 +1,19 @@
-/*project: vertebral dataset ml models
-	source: /kaggle/input/datasets/jessanrod3/vertebralcolumndataset
+/* Project: Classify normal/abnormal spine by using ml models
 	author: Hieu Bui
-	date: 2026-10-29*/
+	date: 2026-10-30 */
 	
+/* 1. Import dataset */
 libname sas "/home/u64368263/personal_projects/data";
 
-proc import datafile='/home/u64368263/personal_projects/data/Dataset_spine.csv'
-	out=sas.spine
-	dbms=csv
-	replace;
+proc import
+    datafile="/home/u64368263/personal_projects/data/Dataset_spine.csv"
+    out=sas.spine
+    dbms=csv
+    replace;
+    guessingrows=max;
 run;
 
-proc contents data=sas.spine;
-run;
-/* rename column name for easy use */
+/* 2. Rename features */
 data sas.spine;
     set sas.spine;
 
@@ -26,29 +26,57 @@ data sas.spine;
         ' grade of spondylolisthesis'n = spondylolisthesis_grade;
 run;
 
-/* Convert class_att into binary 0, 1 */
-data sas.spine_binary; set sas.spine;
-	if class_att in ("Abnormal", "Yes", "1") then binary_target = 1;
-	else binary_target = 0;
+/* 3. Binary classification target */
+data sas.spine_binary;
+    set sas.spine;
+    length binary_target 8;
+    select (upcase(strip(class_att)));
+        when ("ABNORMAL", "YES", "1")
+            binary_target = 1;
+        when ("NORMAL", "NO", "0")
+            binary_target = 0;
+        otherwise binary_target = .;
+    end;
+    if missing(binary_target) then delete;
 run;
 
-/* Specify features and target for the models */
-%let feature_input = pelvic_incidence 
-					pelvic_tilt
-					lumbar_lordosis
-					sacral_slope
-					pelvic_radius
-					spondylolisthesis_grade;
+/* 4. Verify outcome distribution */
+proc freq data=sas.spine_binary;
+    tables class_att*binary_target / missing;
+run;
+
+/* 5. Define predictors */
+%let feature_input =
+    pelvic_incidence
+    pelvic_tilt
+    lumbar_lordosis
+    sacral_slope
+    pelvic_radius
+    spondylolisthesis_grade;
+
 %let target_input = binary_target;
 
-/* --- Decision Tree --- */
-proc hpsplit data=sas.spine_binary;
-	input &feature_input. / level=interval;
-	target &target_input. / level=nominal;
-	partition fraction(test=0.3 seed=123);
-	prune costcomplexity;
+/* 6. Decision Tree */
+ods graphics on;
+
+proc hpsplit data=sas.spine_binary
+             maxdepth=5
+             seed=123;
+    class &target_input.;
+    model &target_input.(event='1')
+        = &feature_input.;
+    grow entropy;
+    prune costcomplexity;
+    partition fraction(validate=0.3 seed=123);
 run;
 
-*continue...;
+/* 7. Logistic Regression */
+proc logistic data=sas.spine_binary
+              plots(only)=roc;
+    model &target_input.(event='1')
+        = &feature_input.
+        / clodds=wald;
+    roc;
+run;
 
-
+ods graphics off;
